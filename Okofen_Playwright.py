@@ -87,7 +87,13 @@ def run(playwright: Playwright, target_mode: str) -> None:
 
     print("[TRACE] [run] Lancement du navigateur Playwright Chromium")
     browser = playwright.chromium.launch(headless=True)
-    context = browser.new_context()
+    context = browser.new_context(
+        locale="fr-FR",
+        timezone_id="Europe/Paris",
+        extra_http_headers={
+            "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.8"
+        },
+    )
     page = context.new_page()
 
     print("[TRACE] [run] Set des timeouts par défaut")
