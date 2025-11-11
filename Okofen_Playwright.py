@@ -77,8 +77,7 @@ def set_mode(page, target: str) -> bool:
         raise ValueError(f"Mode inconnu : {{target}}")
 
 def run(playwright: Playwright, target_mode: str) -> None:
-    print(f"[TRACE] [run] === DEBUT run() pour target_mode={{target_mode}} ===")
-
+    print(f"[TRACE] [run] === DEBUT run() pour target_mode={target_mode} ===")
     print("[TRACE] [run] Vérification des credentials en environnement")
     if not OKOFEN_USER or not OKOFEN_PASSWORD:
         raise RuntimeError(
@@ -98,7 +97,7 @@ def run(playwright: Playwright, target_mode: str) -> None:
 
     # Page de login
     print("[TRACE] [run] Navigation vers la page de login")
-    page.goto(f"{{OKOFEN_URL}}/login.cgi", wait_until="domcontentloaded")
+    page.goto(f"{OKOFEN_URL}/login.cgi", wait_until="domcontentloaded")
 
     # On attend tranquillement la ligne "Francais"
     print("[TRACE] [run] Attente de la ligne de choix de langue 'Francais'\n")
@@ -115,7 +114,7 @@ def run(playwright: Playwright, target_mode: str) -> None:
 
     # Accueil / page principale
     print("[TRACE] [run] Navigation vers la page d'accueil")
-    page.goto(f"{{OKOFEN_URL}}/", wait_until="domcontentloaded")
+    page.goto(f"{OKOFEN_URL}/", wait_until="domcontentloaded")
     print("[TRACE] [run] Attente de networkidle sur la page d'accueil")
     page.wait_for_load_state("networkidle")
 
@@ -171,6 +170,6 @@ if __name__ == "__main__":
             print("Usage : python Okofen_Playwright.py [on|off]")
             sys.exit(1)
 
-    print(f"[TRACE] [main] Lancement de run() avec mode={{mode}}")
+    print(f"[TRACE] [main] Lancement de run() avec mode={mode}")
     with sync_playwright() as playwright:
         run(playwright, mode)
