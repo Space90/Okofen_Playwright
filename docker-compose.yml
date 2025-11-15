@@ -1,0 +1,11 @@
+services:
+  okofen-web:
+    build: .
+    container_name: okofen-web
+    restart: unless-stopped
+    network_mode: "host"       # accès direct au LAN et à la chaudière
+    env_file:
+      - .env                   # NON commité (copie de .env.example)
+    working_dir: /app
+    volumes:
+      - ./logs:/app/logs       # optionnel pour récupérer les logs depuis l’hôte
