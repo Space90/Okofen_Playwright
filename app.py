@@ -85,6 +85,9 @@ def create_app():
     logging.info("Okofen web service starting…")
     logging.info("Using script: %s", app.config["SCRIPT_PATH"])
 
+    # Variable pour stocker le dernier résultat structuré
+    last_result = None
+
     # ---------------------------
     # Auth Bearer
     # ---------------------------
@@ -103,14 +106,27 @@ def create_app():
         return wrapper
 
     # ---------------------------
-    # Exécution script
+    # Exécution script (synchrone)
     # ---------------------------
 
-    def _run_script(action: str):
+    def _run_script_sync(action: str):
+        nonlocal last_result
+
         start = time.time()
 
         if action not in {"on", "off"}:
-            return 400, {"ok": False, "error": "invalid_action", "action": action}
+            payload = {
+                "ok": False,
+                "action": action,
+                "status": "unknown",
+                "changed": None,
+                "duration_ms": 0,
+                "error_code": "invalid_action",
+                "error_message": "Action invalide.",
+                "speech": "L'action demandée est invalide.",
+            }
+            last_result = payload
+            return 400, payload
 
         # Empêcher deux exécutions simultanées
         if not _lock.acquire(blocking=False):
@@ -125,6 +141,7 @@ def create_app():
                 "error_message": "Une commande est déjà en cours d'exécution.",
                 "speech": "Une commande de pilotage de la chaudière est déjà en cours, réessaie dans quelques secondes.",
             }
+            last_result = payload
             return 429, payload
 
         try:
@@ -165,8 +182,12 @@ def create_app():
                     if not ok:
                         payload["error_code"] = "script_error"
                         payload["error_message"] = "Erreur lors de l'exécution du script."
-                        logging.warning("Script terminé avec rc=%s sans résumé JSON", proc.returncode)
+                        logging.warning(
+                            "Script terminé avec rc=%s sans résumé JSON",
+                            proc.returncode,
+                        )
                     http_code = 200 if ok else 500
+                    last_result = payload
                     return http_code, payload
 
                 # Construction de la réponse à partir du résumé
@@ -205,6 +226,7 @@ def create_app():
                         summary.get("error"),
                     )
 
+                last_result = payload
                 return http_code, payload
 
             except subprocess.TimeoutExpired as e:
@@ -229,10 +251,29 @@ def create_app():
                     "error_message": "La chaudière ne répond pas (timeout).",
                     "speech": "Je n'arrive pas à contacter la chaudière pour l'instant.",
                 }
+                last_result = payload
                 return 504, payload
 
         finally:
             _lock.release()
+
+    # ---------------------------
+    # Wrapper asynchrone
+    # ---------------------------
+
+    def _run_script_async(action: str):
+        def worker():
+            code, body = _run_script_sync(action)
+            logging.info(
+                "Async script finished action=%s http_code=%s ok=%s status=%s",
+                action,
+                code,
+                body.get("ok"),
+                body.get("status"),
+            )
+
+        t = threading.Thread(target=worker, daemon=True)
+        t.start()
 
     # ---------------------------
     # Routes HTTP
@@ -256,14 +297,45 @@ def create_app():
     @app.post("/on")
     @require_token
     def turn_on():
-        code, body = _run_script("on")
-        return jsonify(body), code
+        # On lance le script en arrière-plan, on répond vite à HA/Alexa
+        _run_script_async("on")
+        body = {
+            "ok": True,
+            "action": "on",
+            "status": "pending",
+            "changed": None,
+            "duration_ms": 0,
+            "speech": "Commande d'allumage envoyée à la chaudière.",
+        }
+        return jsonify(body), 202
 
     @app.post("/off")
     @require_token
     def turn_off():
-        code, body = _run_script("off")
-        return jsonify(body), code
+        _run_script_async("off")
+        body = {
+            "ok": True,
+            "action": "off",
+            "status": "pending",
+            "changed": None,
+            "duration_ms": 0,
+            "speech": "Commande d'arrêt envoyée à la chaudière.",
+        }
+        return jsonify(body), 202
+
+    @app.get("/last")
+    @require_token
+    def last():
+        nonlocal last_result
+        if last_result is None:
+            return jsonify(
+                {
+                    "ok": False,
+                    "error": "no_result_yet",
+                    "speech": "Aucune commande chaudière n'a encore été exécutée.",
+                }
+            ), 404
+        return jsonify(last_result), 200
 
     return app
 
