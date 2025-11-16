@@ -1,24 +1,32 @@
 import os
-import re
 import sys
+import json
+import time
 from playwright.sync_api import Playwright, sync_playwright, expect
 from dotenv import load_dotenv
 
 # Chargement des variables d'environnement depuis .env (si présent)
 load_dotenv()
 
-OKOFEN_URL = os.getenv("OKOFEN_URL", "http://192.168.1.6:8080")
+OKOFEN_URL = os.getenv("OKOFEN_URL")
 OKOFEN_USER = os.getenv("OKOFEN_USER")
 OKOFEN_PASSWORD = os.getenv("OKOFEN_PASSWORD")
 
-def set_mode(page, target: str) -> bool:
+
+def set_mode(page, target: str):
     """
     target = "off"  -> Auto -> Arrêt
     target = "on"   -> Arrêt -> Auto
 
-    Retourne:
-        True  si un changement de mode a été demandé (popup OK présente)
-        False si aucun changement n'a été effectué
+    Retourne un tuple:
+        (changed, status_before, status_after)
+
+        changed:
+            True  si un changement de mode a été demandé (popup OK présente)
+            False si aucun changement n'a été effectué
+
+        status_before / status_after:
+            "on" | "off" | "unknown"
     """
 
     print("[TRACE] [set_mode] --- DEBUT set_mode ---")
@@ -31,14 +39,26 @@ def set_mode(page, target: str) -> bool:
     has_auto = mode_auto.count() > 0
     has_arret = mode_arret.count() > 0
 
-    print(f"[DEBUG] [set_mode] a. Mode scan: has_auto={{has_auto}}, has_arret={{has_arret}}, target={{target}}")
+    # Déduction de l'état actuel
+    if has_auto and not has_arret:
+        status_before = "on"
+    elif has_arret and not has_auto:
+        status_before = "off"
+    else:
+        status_before = "unknown"
+
+    print(f"[DEBUG] [set_mode] a. Mode scan: has_auto={has_auto}, has_arret={has_arret}, target={target}")
+    changed = False
+    status_after = status_before
 
     if target == "off":
         print("[TRACE] [set_mode] Debut branche target=off")
         # Si on voit déjà "ModeArrêt" sans "ModeAuto", on considère qu'on est déjà à l'arrêt
         if has_arret and not has_auto:
             print("[DEBUG] [set_mode] b. Mode déjà en Arrêt (aucune action)")
-            return False
+            changed = False
+            status_after = "off"
+            return changed, status_before, status_after
 
         # Si on voit "ModeAuto", on peut basculer vers Arrêt
         if has_auto:
@@ -47,18 +67,24 @@ def set_mode(page, target: str) -> bool:
             mode_auto.click()
             page.get_by_role("button", name="Arrêt", exact=True).click()
             print("[DEBUG] [set_mode] d. Passage en mode Arrêt demandé")
-            return True
+            changed = True
+            status_after = "off"
+            return changed, status_before, status_after
 
         # Cas indéterminé
         print("[DEBUG] [set_mode] e. Impossible de déterminer le mode actuel (target=off), aucune action")
-        return False
+        changed = False
+        status_after = "unknown"
+        return changed, status_before, status_after
 
     elif target == "on":
         print("[TRACE] [set_mode] Debut branche target=on")
         # Si on voit déjà "ModeAuto" sans "ModeArrêt", on considère que c'est déjà allumé
         if has_auto and not has_arret:
             print("[DEBUG] [set_mode] f. Mode déjà en Auto (aucune action)")
-            return False
+            changed = False
+            status_after = "on"
+            return changed, status_before, status_after
 
         # Si on voit "ModeArrêt", on peut basculer vers Auto
         if has_arret:
@@ -67,22 +93,33 @@ def set_mode(page, target: str) -> bool:
             mode_arret.click()
             page.get_by_role("button", name="Auto").click()
             print("[DEBUG] [set_mode] h. Passage en mode Auto demandé")
-            return True
+            changed = True
+            status_after = "on"
+            return changed, status_before, status_after
 
         # Cas indéterminé
         print("[DEBUG] [set_mode] i. Impossible de déterminer le mode actuel (target=on), aucune action")
-        return False
+        changed = False
+        status_after = "unknown"
+        return changed, status_before, status_after
 
     else:
-        raise ValueError(f"Mode inconnu : {{target}}")
+        raise ValueError(f"Mode inconnu : {target}")
 
-def run(playwright: Playwright, target_mode: str) -> None:
+
+def run(playwright: Playwright, target_mode: str):
+    """
+    Exécute la séquence Playwright pour atteindre le mode demandé.
+
+    Retourne:
+        (status_before, status_after, changed)
+    """
     print(f"[TRACE] [run] === DEBUT run() pour target_mode={target_mode} ===")
     print("[TRACE] [run] Vérification des credentials en environnement")
     if not OKOFEN_USER or not OKOFEN_PASSWORD:
         raise RuntimeError(
-            "Les variables d'environnement OKOFEN_USER et OKOFEN_PASSWORD \
-            doivent être définies (voir fichier .env)."
+            "Les variables d'environnement OKOFEN_USER et OKOFEN_PASSWORD "
+            "doivent être définies (voir fichier .env)."
         )
 
     print("[TRACE] [run] Lancement du navigateur Playwright Chromium")
@@ -135,8 +172,7 @@ def run(playwright: Playwright, target_mode: str) -> None:
     expect(page.get_by_text("Nom du circuitChauffage")).to_be_visible(timeout=30000)
 
     print("[TRACE] [run] APPEL à set_mode")
-    # 🔁 Appliquer le mode demandé (on/off) sans forcer si déjà OK
-    changed = set_mode(page, target_mode)
+    changed, status_before, status_after = set_mode(page, target_mode)
 
     # Valider uniquement si on a vraiment demandé un changement
     if changed:
@@ -154,16 +190,23 @@ def run(playwright: Playwright, target_mode: str) -> None:
             home_link.click()
             print("[TRACE] [run] Retour Home effectué")
     except Exception as e:
-        print(f"[DEBUG] [run] Impossible de cliquer sur Home : {{e}}")
+        print(f"[DEBUG] [run] Impossible de cliquer sur Home : {e}")
 
     print("[TRACE] [run] Fermeture du contexte et du navigateur")
     context.close()
     browser.close()
 
+    return status_before, status_after, changed
+
 
 if __name__ == "__main__":
-    # Valeur par défaut : off (sécuritaire)
+    start = time.time()
     mode = "off"
+    ok = False
+    error_msg = ""
+    status_before = "unknown"
+    status_after = "unknown"
+    changed = None
 
     print("[TRACE] [main] DEBUT main, parsing des arguments éventuels")
     if len(sys.argv) > 1:
@@ -176,6 +219,43 @@ if __name__ == "__main__":
             print("Usage : python Okofen_Playwright.py [on|off]")
             sys.exit(1)
 
-    print(f"[TRACE] [main] Lancement de run() avec mode={mode}")
-    with sync_playwright() as playwright:
-        run(playwright, mode)
+    try:
+        print(f"[TRACE] [main] Lancement de run() avec mode={mode}")
+        with sync_playwright() as playwright:
+            status_before, status_after, changed = run(playwright, mode)
+        ok = True
+    except Exception as e:
+        ok = False
+        error_msg = str(e)
+        print(f"[ERROR] [main] Exception: {e}")
+
+    duration_ms = int((time.time() - start) * 1000)
+
+    summary = {
+        "ok": ok,
+        "action": mode,
+        "status_before": status_before,
+        "status_after": status_after,
+        "changed": changed,
+        "duration_ms": duration_ms,
+    }
+
+    if not ok:
+        summary["error"] = error_msg
+        summary["message"] = "Une erreur est survenue pendant le pilotage de la chaudière."
+    else:
+        if changed:
+            if mode == "on":
+                summary["message"] = "Chaudière allumée avec succès."
+            else:
+                summary["message"] = "Chaudière arrêtée avec succès."
+        else:
+            if mode == "on":
+                summary["message"] = "La chaudière était déjà allumée."
+            else:
+                summary["message"] = "La chaudière était déjà à l'arrêt."
+
+    # Ligne spéciale pour l'API HTTP (app.py)
+    print("OKOFEN_SUMMARY:" + json.dumps(summary, ensure_ascii=False))
+
+    sys.exit(0 if ok else 1)
