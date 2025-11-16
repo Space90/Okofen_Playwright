@@ -6,7 +6,7 @@ After=network.target
 Type=simple
 WorkingDirectory=/opt/Okofen_Playwright
 # On utilise le python du venv pour lancer gunicorn
-ExecStart=/opt/Okofen_Playwright/.venv/bin/gunicorn -w 2 -b 0.0.0.0:5000 --timeout 180 "app:create_app() --log-level debug"
+ExecStart=/opt/Okofen_Playwright/.venv/bin/gunicorn -w 2 -b 0.0.0.0:5000 --timeout 180 --log-level debug "app:create_app()"
 Restart=on-failure
 RestartSec=3
 # Tu peux mettre User=root dans un LXC d  di  , ou cr  er un user okofen
