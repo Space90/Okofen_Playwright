@@ -18,7 +18,7 @@ from dotenv import load_dotenv
 
 def _setup_logging(log_path: str, level: str = "INFO"):
     logger = logging.getLogger()
-    logger.setLevel(getattr(logging, level.upper(), logging.INFO))
+    logger.setLevel(getattr(logging, level.upper(), logging.DEBUG))
 
     formatter = logging.Formatter(
         fmt="%(asctime)s %(levelname)s %(name)s %(message)s",
